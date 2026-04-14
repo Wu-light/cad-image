@@ -62,10 +62,10 @@ DEFAULT_COLOR = "blue"
 DEFAULT_COLOR_MODE = "rgb"
 DEFAULT_ROTATION_ANGLE = 0.0
 
-# Camera Defaults
-DEFAULT_CAMERA_DISTANCE = 3.0
-DEFAULT_CAMERA_HEIGHT = 2.0
-DEFAULT_CAMERA_BASE_ANGLE = -45.0
+# Camera Defaults (oblique/isometric view)
+DEFAULT_CAMERA_DISTANCE = 3.5
+DEFAULT_CAMERA_HEIGHT = 2.5
+DEFAULT_CAMERA_BASE_ANGLE = -35.0
 
 # Video Defaults
 DEFAULT_VIDEO_FPS = 24
@@ -602,7 +602,10 @@ def render(
         DEFAULT_MESH_ANGULAR_DEFLECTION, help="Mesh angular deflection"
     ),
     color: str = typer.Option(
-        DEFAULT_COLOR, help="Color for rendering (blue/pink/orange/green/silver)"
+        DEFAULT_COLOR, help="Color for rendering (blue/pink/orange/green/silver). Use --colors for multi-color output."
+    ),
+    colors: str = typer.Option(
+        None, help="Comma-separated list of colors to render each file in multiple colors (e.g. 'blue,pink,orange')"
     ),
     max_workers: int = typer.Option(
         DEFAULT_MAX_WORKERS, help="Maximum number of parallel workers"
@@ -700,73 +703,95 @@ def render(
         mesh_linear_deflection = FAST_MESH_LINEAR_DEFLECTION
         mesh_angular_deflection = FAST_MESH_ANGULAR_DEFLECTION
 
+    # Parse multi-color list
+    color_list = [color]
+    if colors is not None:
+        color_list = [c.strip() for c in colors.split(",") if c.strip()]
+        # Validate all colors
+        for c in color_list:
+            if c not in COLOR_PRESETS:
+                typer.echo(f"Error: Unknown color '{c}'. Available: {', '.join(COLOR_PRESETS.keys())}")
+                raise typer.Exit(1)
+
     if explode:
         for step_file in step_files:
-            explode_step_file(
-                step_file,
-                output_render_dir,
-                edge_deflection,
-                mesh_linear_deflection,
-                mesh_angular_deflection,
-                stand_upright,
-                flip_z,
-                no_normalize,
-                blender_script,
-                color,
-                rotation_angle,
-                color_mode,
-                camera_distance,
-                camera_height,
-                camera_base_angle,
-                ground_plane_z,
-            )
+            for c in color_list:
+                explode_output = output_render_dir
+                if len(color_list) > 1:
+                    explode_output = output_render_dir / c
+                explode_step_file(
+                    step_file,
+                    explode_output,
+                    edge_deflection,
+                    mesh_linear_deflection,
+                    mesh_angular_deflection,
+                    stand_upright,
+                    flip_z,
+                    no_normalize,
+                    blender_script,
+                    c,
+                    rotation_angle,
+                    color_mode,
+                    camera_distance,
+                    camera_height,
+                    camera_base_angle,
+                    ground_plane_z,
+                )
         return
 
-    # Process files in parallel
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Prepare arguments for each file
-        args_list = [
-            (
-                step_file,
-                output_npz_dir,
-                output_render_dir,
-                blender_script,
-                edge_deflection,
-                mesh_linear_deflection,
-                mesh_angular_deflection,
-                color,
-                stand_upright,
-                flip_z,
-                no_normalize,
-                rotation_angle,
-                color_mode,
-                resolution,
-                partial_faces,
-                verbose,
-                output_name,
-                camera_distance,
-                camera_height,
-                camera_base_angle,
-                ground_plane_z,
-            )
-            for step_file in step_files
-        ]
+    # Process files in parallel, for each color
+    successful_npz = []
+    successful_renders = []
 
-        # Submit all tasks and track progress
-        futures = [executor.submit(process_file, args) for args in args_list]
+    for c in color_list:
+        # When multiple colors, create subdirectory for each color
+        render_dir_for_color = output_render_dir
+        if len(color_list) > 1:
+            render_dir_for_color = output_render_dir / c
+            render_dir_for_color.mkdir(parents=True, exist_ok=True)
 
-        # Process results with progress bar
-        successful_npz = []
-        successful_renders = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Prepare arguments for each file
+            args_list = [
+                (
+                    step_file,
+                    output_npz_dir,
+                    render_dir_for_color,
+                    blender_script,
+                    edge_deflection,
+                    mesh_linear_deflection,
+                    mesh_angular_deflection,
+                    c,
+                    stand_upright,
+                    flip_z,
+                    no_normalize,
+                    rotation_angle,
+                    color_mode,
+                    resolution,
+                    partial_faces,
+                    verbose,
+                    output_name,
+                    camera_distance,
+                    camera_height,
+                    camera_base_angle,
+                    ground_plane_z,
+                )
+                for step_file in step_files
+            ]
 
-        for future in tqdm(
-            as_completed(futures), total=len(futures), desc="Processing files"
-        ):
-            npz_path, render_path = future.result()
-            if npz_path:
-                successful_npz.append(npz_path)
-            if render_path:
-                successful_renders.append(render_path)
+            # Submit all tasks and track progress
+            futures = [executor.submit(process_file, args) for args in args_list]
+
+            # Process results with progress bar
+            desc = f"Processing files ({c})" if len(color_list) > 1 else "Processing files"
+            for future in tqdm(
+                as_completed(futures), total=len(futures), desc=desc
+            ):
+                npz_path, render_path = future.result()
+                if npz_path:
+                    successful_npz.append(npz_path)
+                if render_path:
+                    successful_renders.append(render_path)
 
     # Clean up temporary directory if used
     if use_temp_dir:
@@ -781,6 +806,8 @@ def render(
     print("\nProcessing complete!")
     print(f"Processed {len(successful_npz)} files")
     print(f"Rendered {len(successful_renders)} images")
+    if len(color_list) > 1:
+        print(f"Colors rendered: {', '.join(color_list)}")
     print(f"\nOutput locations:")
     if keep_intermediate or intermediate_dir is not None:
         print(f"Intermediate files: {output_npz_dir}")
@@ -1058,6 +1085,157 @@ def render_video(
 
         typer.echo(f"✓ Video saved to: {output_path}")
         typer.echo(f"  Frames: {n_frames}, Duration: {duration}s, FPS: {fps}")
+
+
+@app.command()
+def batch(
+    input_dir: Path = typer.Argument(
+        ..., help="Directory containing STEP file(s) to batch process"
+    ),
+    output_dir: Path = typer.Option(None, help="Base output directory (default: same as input_dir)"),
+    colors: str = typer.Option(
+        "blue,pink,orange,green,silver",
+        help="Comma-separated list of colors to render (e.g. 'blue,pink,orange')",
+    ),
+    n_steps: int = typer.Option(DEFAULT_N_STEPS, help="Maximum number of STEP files to process"),
+    resolution: int = typer.Option(
+        DEFAULT_RESOLUTION, help="Rendering resolution in pixels (width and height)"
+    ),
+    max_workers: int = typer.Option(
+        DEFAULT_MAX_WORKERS, help="Maximum number of parallel workers"
+    ),
+    stand_upright: bool = typer.Option(
+        False, help="Stand model upright (rotate 90° around X axis)"
+    ),
+    flip_z: bool = typer.Option(False, help="Flip model along Z axis (XZ plane)"),
+    no_normalize: bool = typer.Option(
+        False, help="Skip normalization (keep original scale and position)"
+    ),
+    color_mode: str = typer.Option(DEFAULT_COLOR_MODE, help="Color mode (rgb/rgba)"),
+    fast: bool = typer.Option(
+        False, help="Fast mode: reduce quality for faster processing (coarser mesh)"
+    ),
+    camera_distance: float = typer.Option(
+        None, help="Camera distance from model (default: 3.5)"
+    ),
+    camera_height: float = typer.Option(
+        None, help="Camera height (Z position, default: 2.5)"
+    ),
+    camera_base_angle: float = typer.Option(
+        None, help="Camera base angle in degrees (default: -35.0)"
+    ),
+    ground_plane_z: float = typer.Option(
+        GROUND_PLANE_Z, help="Ground plane Z position after normalization (default: -0.5)"
+    ),
+    verbose: bool = typer.Option(
+        False, help="Print detailed information about each STEP file being processed"
+    ),
+):
+    """
+    Batch process all STEP files in a directory, rendering each in multiple colors.
+
+    This is a convenience command that processes all .step files in the input directory
+    and renders each file in every specified color. Output is organized by color subdirectories.
+
+    Example:
+        python vis_step.py batch samples/ --colors "blue,pink,orange" --resolution 512
+    """
+    # Validate input
+    if not input_dir.exists() or not input_dir.is_dir():
+        typer.echo(f"Error: {input_dir} is not a valid directory")
+        raise typer.Exit(1)
+
+    # Parse and validate colors
+    color_list = [c.strip() for c in colors.split(",") if c.strip()]
+    for c in color_list:
+        if c not in COLOR_PRESETS:
+            typer.echo(f"Error: Unknown color '{c}'. Available: {', '.join(COLOR_PRESETS.keys())}")
+            raise typer.Exit(1)
+
+    # Set up output directory
+    if output_dir is None:
+        output_dir = input_dir / "batch_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Discover STEP files
+    step_files = _discover_step_files(input_dir, n_steps)
+
+    typer.echo(f"Batch processing {len(step_files)} STEP file(s)")
+    typer.echo(f"Colors: {', '.join(color_list)}")
+    typer.echo(f"Output: {output_dir}")
+    typer.echo("")
+
+    # Get blender script
+    blender_script = Path(BLENDER_RENDER_SCRIPT)
+    if not blender_script.exists():
+        typer.echo(f"Error: Blender script not found at {blender_script}")
+        raise typer.Exit(1)
+
+    # Apply fast mode
+    edge_deflection = DEFAULT_EDGE_DEFLECTION
+    mesh_linear_deflection = DEFAULT_MESH_LINEAR_DEFLECTION
+    mesh_angular_deflection = DEFAULT_MESH_ANGULAR_DEFLECTION
+    if fast:
+        edge_deflection = FAST_EDGE_DEFLECTION
+        mesh_linear_deflection = FAST_MESH_LINEAR_DEFLECTION
+        mesh_angular_deflection = FAST_MESH_ANGULAR_DEFLECTION
+
+    total_renders = 0
+
+    for c in color_list:
+        # Create color subdirectory
+        color_output_dir = output_dir / c
+        color_output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use temp dir for intermediate NPZ files
+        with tempfile.TemporaryDirectory(prefix="brepvis_batch_") as tmpdir:
+            npz_dir = Path(tmpdir)
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                args_list = [
+                    (
+                        step_file,
+                        npz_dir,
+                        color_output_dir,
+                        blender_script,
+                        edge_deflection,
+                        mesh_linear_deflection,
+                        mesh_angular_deflection,
+                        c,
+                        stand_upright,
+                        flip_z,
+                        no_normalize,
+                        DEFAULT_ROTATION_ANGLE,
+                        color_mode,
+                        resolution,
+                        None,  # partial_faces
+                        verbose,
+                        None,  # output_name
+                        camera_distance,
+                        camera_height,
+                        camera_base_angle,
+                        ground_plane_z,
+                    )
+                    for step_file in step_files
+                ]
+
+                futures = [executor.submit(process_file, args) for args in args_list]
+
+                for future in tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=f"Rendering ({c})",
+                ):
+                    npz_path, render_path = future.result()
+                    if render_path:
+                        total_renders += 1
+
+    typer.echo(f"\nBatch processing complete!")
+    typer.echo(f"Total renders: {total_renders}")
+    typer.echo(f"Files: {len(step_files)}, Colors: {len(color_list)}")
+    typer.echo(f"Output: {output_dir}")
+    for c in color_list:
+        typer.echo(f"  {c}/: {output_dir / c}")
 
 
 if __name__ == "__main__":
