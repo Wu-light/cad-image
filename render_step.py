@@ -84,10 +84,10 @@ def arg_parser() -> Arguments:
     stand_upright = "stand_upright" in flags
     color_mode = "rgba" if "rgba" in flags else "rgb"
 
-    # Camera parameters (default to standard values, can be overridden by flags)
-    camera_distance = 3.0
-    camera_height = 2.0
-    camera_base_angle = -45.0
+    # Camera parameters (default to oblique/isometric view, can be overridden by flags)
+    camera_distance = 3.5
+    camera_height = 2.5
+    camera_base_angle = -35.0
 
     # Parse camera parameter overrides from flags
     for flag in flags:
