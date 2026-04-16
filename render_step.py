@@ -272,21 +272,29 @@ def main():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete()
 
-    data = np.load(args.input_file, allow_pickle=True)
+    data = np.load(args.input_file)
 
-    if "vertices" in data and "triangles" in data and "edges" in data:
+    # Unpack edges from flat arrays (pickle-free storage)
+    def _unpack_edges(npz_data):
+        edge_points = npz_data["edge_points"]
+        edge_offsets = npz_data["edge_offsets"]
+        return [edge_points[edge_offsets[i]:edge_offsets[i + 1]]
+                for i in range(len(edge_offsets) - 1)]
+
+    if "vertices" in data and "triangles" in data and "edge_points" in data:
         vertices = data["vertices"]
         triangles = data["triangles"]
-        edges = data["edges"]
+        edges = _unpack_edges(data)
         mesh_obj = create_mesh_object(vertices, triangles)
         edge_obj = create_edge_object(edges)
-    elif "edges" in data:
-        edges = data["edges"]
+    elif "edge_points" in data:
+        edges = _unpack_edges(data)
         edge_obj = create_edge_object(edges)
         mesh_obj = None
     else:
         raise ValueError(
-            "NPZ file must contain either 'vertices', 'triangles', and 'edges', or just 'edges'."
+            "NPZ file must contain 'edge_points' and 'edge_offsets' "
+            "(and optionally 'vertices' and 'triangles')."
         )
 
     create_lights()

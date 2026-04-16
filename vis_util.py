@@ -265,6 +265,55 @@ def offset_edges_from_surface(edges, mesh):
 
 
 # =============================================================================
+# Edge Packing Utilities (pickle-free NPZ storage)
+# =============================================================================
+
+
+def pack_edges(edges):
+    """
+    Pack a list of variable-length edge arrays into flat arrays for pickle-free NPZ storage.
+
+    Instead of storing edges as a ragged object array (which requires pickle and
+    enables arbitrary code execution on load), this stores edges as a single
+    concatenated point array plus an offsets array to reconstruct individual edges.
+
+    Args:
+        edges: List of Nx3 numpy arrays, each representing an edge's points
+
+    Returns:
+        Tuple of (edge_points, edge_offsets) where:
+        - edge_points: Concatenated Mx3 array of all edge points
+        - edge_offsets: 1D int64 array of length len(edges)+1 with cumulative offsets
+    """
+    if not edges:
+        return np.empty((0, 3), dtype=np.float64), np.array([0], dtype=np.int64)
+    edge_points = np.concatenate(edges, axis=0)
+    edge_lengths = np.array([len(e) for e in edges], dtype=np.int64)
+    edge_offsets = np.concatenate([[0], np.cumsum(edge_lengths)]).astype(np.int64)
+    return edge_points, edge_offsets
+
+
+def unpack_edges(edge_points, edge_offsets):
+    """
+    Unpack flat edge arrays back to a list of variable-length edge arrays.
+
+    Inverse of pack_edges(). Reconstructs the original list of edge arrays
+    from the concatenated point array and offset indices.
+
+    Args:
+        edge_points: Concatenated Mx3 array of all edge points
+        edge_offsets: 1D int64 array of cumulative offsets (length = num_edges + 1)
+
+    Returns:
+        List of Nx3 numpy arrays, one per edge
+    """
+    edges = []
+    for i in range(len(edge_offsets) - 1):
+        edges.append(edge_points[edge_offsets[i]:edge_offsets[i + 1]])
+    return edges
+
+
+# =============================================================================
 # STEP File I/O and Processing
 # =============================================================================
 
