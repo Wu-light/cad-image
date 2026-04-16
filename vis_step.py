@@ -28,6 +28,9 @@ from vis_util import (
     apply_transformations,
     normalize_vertices,
     offset_edges_from_surface,
+    # Edge packing (pickle-free NPZ storage)
+    pack_edges,
+    unpack_edges,
     # Helper functions
     _read_step_file,
     _count_geometry,
@@ -244,10 +247,12 @@ def process_step_file(
         mesh = trimesh.Trimesh(vertices=vertices, faces=triangles)
         all_edges_rescaled = offset_edges_from_surface(all_edges_rescaled, mesh)
 
-    # Save to NPZ file
+    # Save to NPZ file (pickle-free: edges stored as flat arrays + offsets)
+    edge_points, edge_offsets = pack_edges(all_edges_rescaled)
     np.savez(
         brep_npz_path,
-        edges=np.array(all_edges_rescaled, dtype=object),
+        edge_points=edge_points,
+        edge_offsets=edge_offsets,
         vertices=vertices,
         triangles=triangles,
         scale=norm_params['scale'],
@@ -378,10 +383,13 @@ def explode_step_file(
             normalization_params,  # Use same normalization as face mesh
         )
 
-        # Save and render edge loop
+        # Save and render edge loop (pickle-free)
         edge_loop_npz = exploded_dir / f"face_{face_idx}_loop.npz"
+        edge_loop_points, edge_loop_offsets = pack_edges(edge_loop_edges_normalized)
         np.savez(
-            edge_loop_npz, edges=np.array(edge_loop_edges_normalized, dtype=object)
+            edge_loop_npz,
+            edge_points=edge_loop_points,
+            edge_offsets=edge_loop_offsets,
         )
 
         render_path = render_blender_step(
@@ -405,9 +413,14 @@ def explode_step_file(
             edge_loop_npz.unlink()
 
         # Render each edge individually (use normalized edges)
-        for edge_idx, edge_points in enumerate(edge_loop_edges_normalized):
+        for edge_idx, single_edge in enumerate(edge_loop_edges_normalized):
             edge_npz = exploded_dir / f"face_{face_idx}_edge_{edge_idx}.npz"
-            np.savez(edge_npz, edges=np.array([edge_points], dtype=object))
+            single_edge_points, single_edge_offsets = pack_edges([single_edge])
+            np.savez(
+                edge_npz,
+                edge_points=single_edge_points,
+                edge_offsets=single_edge_offsets,
+            )
 
             render_path = render_blender_step(
                 edge_npz,
@@ -885,11 +898,11 @@ def view(
             typer.echo("Error: Failed to process STEP file")
             raise typer.Exit(1)
 
-        # Load NPZ data
-        data = np.load(npz_path, allow_pickle=True)
+        # Load NPZ data (pickle-free)
+        data = np.load(npz_path)
         vertices = data["vertices"]
         triangles = data["triangles"]
-        edges = data["edges"]
+        edges = unpack_edges(data["edge_points"], data["edge_offsets"])
 
         typer.echo(f"Launching Polyscope viewer...")
         typer.echo(
