@@ -1132,13 +1132,31 @@ def batch(
     ),
 ):
     """
-    Batch process all STEP files in a directory, rendering each in multiple colors.
+    Batch process all STEP files in a directory (recursively), rendering each in multiple colors.
 
-    This is a convenience command that processes all .step files in the input directory
-    and renders each file in every specified color. Output is organized by color subdirectories.
+    This command recursively discovers all .step files in the input directory and its
+    subdirectories, then renders each file in every specified color. Output is organized
+    by color subdirectories, with the original subdirectory structure preserved within each.
 
     Example:
         python vis_step.py batch samples/ --colors "blue,pink,orange" --resolution 512
+
+    Given input structure:
+        samples/
+            file1.step
+            subdir/
+                file2.step
+
+    Output structure:
+        samples/batch_output/
+            blue/
+                file1.png
+                subdir/
+                    file2.png
+            pink/
+                file1.png
+                subdir/
+                    file2.png
     """
     # Validate input
     if not input_dir.exists() or not input_dir.is_dir():
@@ -1157,8 +1175,8 @@ def batch(
         output_dir = input_dir / "batch_output"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Discover STEP files
-    step_files = _discover_step_files(input_dir, n_steps)
+    # Discover STEP files recursively
+    step_files = _discover_step_files(input_dir, n_steps, recursive=True)
 
     typer.echo(f"Batch processing {len(step_files)} STEP file(s)")
     typer.echo(f"Colors: {', '.join(color_list)}")
@@ -1192,32 +1210,38 @@ def batch(
             npz_dir = Path(tmpdir)
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                args_list = [
-                    (
-                        step_file,
-                        npz_dir,
-                        color_output_dir,
-                        blender_script,
-                        edge_deflection,
-                        mesh_linear_deflection,
-                        mesh_angular_deflection,
-                        c,
-                        stand_upright,
-                        flip_z,
-                        no_normalize,
-                        DEFAULT_ROTATION_ANGLE,
-                        color_mode,
-                        resolution,
-                        None,  # partial_faces
-                        verbose,
-                        None,  # output_name
-                        camera_distance,
-                        camera_height,
-                        camera_base_angle,
-                        ground_plane_z,
+                args_list = []
+                for step_file in step_files:
+                    # Compute relative path from input_dir to preserve subdirectory structure
+                    relative_subdir = step_file.parent.relative_to(input_dir)
+                    file_render_dir = color_output_dir / relative_subdir
+                    file_render_dir.mkdir(parents=True, exist_ok=True)
+
+                    args_list.append(
+                        (
+                            step_file,
+                            npz_dir,
+                            file_render_dir,
+                            blender_script,
+                            edge_deflection,
+                            mesh_linear_deflection,
+                            mesh_angular_deflection,
+                            c,
+                            stand_upright,
+                            flip_z,
+                            no_normalize,
+                            DEFAULT_ROTATION_ANGLE,
+                            color_mode,
+                            resolution,
+                            None,  # partial_faces
+                            verbose,
+                            None,  # output_name
+                            camera_distance,
+                            camera_height,
+                            camera_base_angle,
+                            ground_plane_z,
+                        )
                     )
-                    for step_file in step_files
-                ]
 
                 futures = [executor.submit(process_file, args) for args in args_list]
 

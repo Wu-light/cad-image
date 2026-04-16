@@ -411,13 +411,14 @@ def _setup_directories(input_dir_or_path: Path, output_dir: Path,
     return output_dir, output_npz_dir, use_temp_dir
 
 
-def _discover_step_files(input_dir_or_path: Path, n_steps: int):
+def _discover_step_files(input_dir_or_path: Path, n_steps: int, recursive: bool = False):
     """
     Find STEP files to process.
 
     Args:
         input_dir_or_path: Input file or directory path
         n_steps: Maximum number of files to process
+        recursive: If True, search subdirectories recursively
 
     Returns:
         List of Path objects for STEP files to process
@@ -431,7 +432,10 @@ def _discover_step_files(input_dir_or_path: Path, n_steps: int):
             raise typer.Exit(1)
         step_files = [input_dir_or_path]
     else:
-        step_files = list(sorted(input_dir_or_path.glob("*.step")))
+        if recursive:
+            step_files = list(sorted(input_dir_or_path.rglob("*.step")))
+        else:
+            step_files = list(sorted(input_dir_or_path.glob("*.step")))
         if len(step_files) > n_steps:
             print(
                 f"Warning: {len(step_files)} STEP files found, only rendering {n_steps} steps"
